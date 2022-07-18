@@ -150,11 +150,14 @@ def get_movies_faceted(filters, page, movies_per_page):
     complete this task.
     """
 
-    # TODO: Faceted Search
+    # Faceted Search
     # Add the necessary stages to the pipeline variable in the correct order.
     # pipeline.extend(...)
 
     try:
+        pipeline.append(skip_stage)
+        pipeline.append(limit_stage)
+        pipeline.append(facet_stage)
         movies = list(db.movies.aggregate(pipeline, allowDiskUse=True))[0]
         count = list(db.movies.aggregate(counting, allowDiskUse=True))[
             0].get("count")
@@ -233,9 +236,9 @@ def get_movies(filters, page, movies_per_page):
     the Pymongo cursor.
     """
 
-    # TODO: Paging
+    # Paging
     # Use the cursor to only return the movies that belong on the current page.
-    movies = cursor.limit(movies_per_page)
+    movies = cursor.skip(int(movies_per_page)*int(page)).limit(movies_per_page)
 
     return (list(movies), total_num_movies)
 
@@ -258,12 +261,30 @@ def get_movie(id):
         Embed the joined comments in a new field called "comments".
         """
 
-        # TODO: Get Comments
+        # Get Comments
         # Implement the required pipeline.
         pipeline = [
             {
                 "$match": {
                     "_id": ObjectId(id)
+                }
+            },
+            {
+                "$lookup": {
+                    "from": "comments",
+                    "let": {"id": "$_id"},
+                    "pipeline": [{
+                        "$match": {
+                            "$expr": {"$eq": ["$movie_id", "$$id"]}
+                        }
+                    },
+                        {
+                        "$sort": {
+                            "date": DESCENDING
+                        }
+                    }
+                    ],
+                    "as": "comments"
                 }
             }
         ]
@@ -324,9 +345,15 @@ def add_comment(movie_id, user, comment, date):
 
     Name and email must be retrieved from the "user" object.
     """
-    # TODO: Create/Update Comments
+    # Create/Update Comments
     # Construct the comment document to be inserted into MongoDB.
-    comment_doc = {"some_field": "some_value"}
+    comment_doc = {
+        "movie_id": ObjectId(movie_id),
+        "name": user.name,
+        "email": user.email,
+        "text": comment,
+        "date": date
+    }
     return db.comments.insert_one(comment_doc)
 
 
@@ -336,12 +363,12 @@ def update_comment(comment_id, user_email, text, date):
     based by both comment _id field as well as the email field to doubly ensure
     the user has permission to edit this comment.
     """
-    # TODO: Create/Update Comments
+    # Create/Update Comments
     # Use the user_email and comment_id to select the proper comment, then
     # update the "text" and "date" of the selected comment.
     response = db.comments.update_one(
-        {"some_field": "some_value"},
-        {"$set": {"some_other_field": "some_other_value"}}
+        {"_id": comment_id, "email": user_email},
+        {"$set": {"text": text, "date": date}}
     )
 
     return response
@@ -360,9 +387,10 @@ def delete_comment(comment_id, user_email):
     this user has permission to delete this comment, and then delete it.
     """
 
-    # TODO: Delete Comments
+    # Delete Comments
     # Use the user_email and comment_id to delete the proper comment.
-    response = db.comments.delete_one({"_id": ObjectId(comment_id)})
+    response = db.comments.delete_one(
+        {"_id": ObjectId(comment_id), "email": user_email})
     return response
 
 
@@ -387,9 +415,9 @@ def get_user(email):
     """
     Given an email, returns a document from the `users` collection.
     """
-    # TODO: User Management
+    # User Management
     # Retrieve the user document corresponding with the user's email.
-    return db.users.find_one({"some_field": "some_value"})
+    return db.users.find_one({"email": email})
 
 
 def add_user(name, email, hashedpw):
@@ -406,15 +434,18 @@ def add_user(name, email, hashedpw):
     """
 
     try:
-        # TODO: User Management
+        # User Management
         # Insert a user with the "name", "email", and "password" fields.
-        # TODO: Durable Writes
+        # Durable Writes
         # Use a more durable Write Concern for this operation.
-        db.users.insert_one({
-            "name": "mongo",
-            "email": "mongo@mongodb.com",
-            "password": "flibbertypazzle"
-        })
+        # db.users.insert_one({
+        #    "name": name,
+        #    "email": email,
+        #    "password": hashedpw
+        # })
+        db.users.with_options(write_concern=WriteConcern(w="majority")).insert_one(
+            {"name": name, "email": email, "password": hashedpw}
+        )
         return {"success": True}
     except DuplicateKeyError:
         return {"error": "A user with the given email already exists."}
@@ -428,12 +459,13 @@ def login_user(email, jwt):
     In `sessions`, each user's email is stored in a field called "user_id".
     """
     try:
-        # TODO: User Management
+        # User Management
         # Use an UPSERT statement to update the "jwt" field in the document,
         # matching the "user_id" field with the email passed to this function.
         db.sessions.update_one(
-            {"some_field": "some_value"},
-            {"$set": {"some_other_field": "some_other_value"}}
+            {"user_id": email},
+            {"$set": {"jwt": jwt}},
+            upsert=True
         )
         return {"success": True}
     except Exception as e:
@@ -448,9 +480,9 @@ def logout_user(email):
     In `sessions`, each user's email is stored in a field called "user_id".
     """
     try:
-        # TODO: User Management
+        # User Management
         # Delete the document in the `sessions` collection matching the email.
-        db.sessions.delete_one({"some_field": "some_value"})
+        db.sessions.delete_one({"user_id": email})
         return {"success": True}
     except Exception as e:
         return {"error": e}
@@ -463,9 +495,9 @@ def get_user_session(email):
     In `sessions`, each user's email is stored in a field called "user_id".
     """
     try:
-        # TODO: User Management
+        # User Management
         # Retrieve the session document corresponding with the user's email.
-        return db.sessions.find_one({"some_field": "some_value"})
+        return db.sessions.find_one({"user_id": email})
     except Exception as e:
         return {"error": e}
 
@@ -476,10 +508,10 @@ def delete_user(email):
     that user's session from the `sessions` collection.
     """
     try:
-        # TODO: User Management
+        # User Management
         # Delete the corresponding documents from `users` and `sessions`.
-        db.sessions.delete_one({"some_field": "some_value"})
-        db.users.delete_one({"some_field": "some_value"})
+        db.sessions.delete_one({"user_id": email})
+        db.users.delete_one({"email": email})
         if get_user(email) is None:
             return {"success": True}
         else:
@@ -503,11 +535,11 @@ def update_prefs(email, prefs):
         reflect the information in prefs.
         """
 
-        # TODO: User preferences
+        # User preferences
         # Use the data in "prefs" to update the user's preferences.
         response = db.users.update_one(
-            {"some_field": "some_value"},
-            {"$set": {"some_other_field": "some_other_value"}}
+            {"email": email},
+            {"$set": {"preferences": prefs}}
         )
         if response.matched_count == 0:
             return {'error': 'no user found'}
