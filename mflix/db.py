@@ -45,10 +45,12 @@ def get_db():
 
         db = g._database = MongoClient(
             MFLIX_DB_URI,
-            # TODO: Connection Pooling
+            # Connection Pooling
             # Set the maximum connection pool size to 50 active connections.
-            # TODO: Timeouts
+            maxPoolSize=50,
+            # Timeouts
             # Set the write timeout limit to 2500 milliseconds.
+            wtimeout=2500
         )[MFLIX_DB_NAME]
     return db
 
@@ -292,7 +294,7 @@ def get_movie(id):
         movie = db.movies.aggregate(pipeline).next()
         return movie
 
-    # TODO: Error Handling
+    # Error Handling
     # If an invalid ID is passed to `get_movie`, it should return None.
     except (StopIteration) as _:
 
@@ -306,8 +308,8 @@ def get_movie(id):
 
         return None
 
-    except Exception as e:
-        return {}
+    except (InvalidId) as e:
+        return None
 
 
 def get_all_genres():
